@@ -1,0 +1,209 @@
+---
+title: "有无内胎产品理赔率趋势分析报告"
+author:
+  - 基础研究部
+  - 刘云鹏
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+classoption: "hyperref,"
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#安装包
+if (!require(RMySQL)) { install.packages("RMySQL") }
+if (!require(tidyr)) { install.packages("tidyr") }
+if (!require(plyr)) { install.packages("plyr") }
+if (!require(zoo)) { install.packages("zoo") }
+if (!require(lubridate)) { install.packages("lubridate") }
+if (!require(dplyr)) { install.packages("dplyr") }
+if (!require(ggplot2)) { install.packages("ggplot2") }
+#加载包
+library(RMySQL)
+library(tidyr)
+library(plyr)
+library(zoo)
+library(lubridate)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(ggthemes)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+conn <- dbConnect(MySQL(), 
+                  dbname = "claim_tires_analysis",
+                  username = "root",
+                  password = "root",
+                  host = "127.0.0.1",
+                  port = 3306)
+dbSendQuery(conn,'SET NAMES gbk')
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+#读取数据
+claim_data <- dbReadTable(conn, "claim_data")
+claim_data <- claim_data[,c('id', '年', '月', '轮胎品牌', '轮胎规格', '轮胎花纹',
+                            '轮胎层级', '生产月', 'DOT年号', '生产厂')]
+claim_data <- unite(claim_data, 生产日期, DOT年号, 生产月, sep = "", remove = TRUE)
+claim_data <- unite(claim_data, 理赔日期, 年, 月, sep = "", remove = TRUE)
+claim_data$生产日期 <- paste("20", claim_data$生产日期, sep = "")
+claim_data <- unite(claim_data, 
+                    轮胎规格,
+                    轮胎品牌, 轮胎规格, 轮胎花纹, 轮胎层级,
+                    sep = " ",remove = TRUE)
+claim_data <- claim_data[claim_data$生产厂 == '合肥',] 
+claim_data$轮胎规格 <- paste(claim_data$轮胎规格, "PR", sep = "")
+claim_data$理赔日期 <- as.yearmon(as.character(claim_data$理赔日期), "%Y%m")
+claim_data$生产日期 <- as.yearmon(as.character(claim_data$生产日期), "%Y%m")
+claim_data$理赔日期 <- as.Date(claim_data$理赔日期)
+claim_data$生产日期 <- as.Date(claim_data$生产日期)
+int <- interval(ymd(claim_data$生产日期), ymd(claim_data$理赔日期))
+claim_data$经过月 <- time_length(int, "month")
+
+sales_data <- dbReadTable(conn, "sales_data")
+sales_data <- sales_data[,c('id', '销售年', '销售月', '轮胎品牌', '轮胎规格', 
+                            '轮胎花纹', '轮胎层级', '生产厂', '生产月', 'DOT年号')]
+sales_data <- unite(sales_data, 销售日期, 销售年, 销售月, sep = "",remove = TRUE)
+sales_data <- unite(sales_data, 生产日期, DOT年号, 生产月, sep = "", remove = TRUE)
+sales_data$生产日期 <- paste("20", sales_data$生产日期, sep = "")
+sales_data <- unite(sales_data, 
+                    轮胎规格, 
+                    轮胎品牌, 轮胎规格, 轮胎花纹, 轮胎层级,
+                    sep = " ",remove = TRUE)
+sales_data$轮胎规格 <- paste(sales_data$轮胎规格, "PR", sep = "")
+sales_data$销售日期 <- as.yearmon(as.character(sales_data$销售日期), "%Y%m")
+sales_data$生产日期 <- as.yearmon(as.character(sales_data$生产日期), "%Y%m")
+sales_data$销售日期 <- as.Date(sales_data$销售日期)
+sales_data$生产日期 <- as.Date(sales_data$生产日期)
+int <- interval(ymd(sales_data$生产日期), ymd(sales_data$销售日期))
+sales_data$经过月 <- time_length(int, "month")
+```
+
+
+# 有内胎产品理赔数据
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+m_tt <- c("6.50|7.00|7.50|8.25|9.00|10.00|11.00|12.00")
+x_tt <- grep(pattern = m_tt, x = claim_data$轮胎规格, value = TRUE)
+y_tt <- grep(pattern = m_tt, x = sales_data$轮胎规格, value = TRUE)
+myvars1_tt <- claim_data$轮胎规格 %in% x_tt
+myvars2_tt <- sales_data$轮胎规格 %in% y_tt
+dat1_tt <- claim_data[myvars1_tt, ]
+dat2_tt <- sales_data[myvars2_tt, ]
+
+dat1_1_tt <- dat1_tt[, c("生产日期","经过月")]
+dat1_2_tt <- plyr::count(dat1_1_tt, names(dat1_1_tt))
+names(dat1_2_tt)[3] <- "理赔数量"
+dat1_3_tt <- dat1_2_tt[order(dat1_2_tt$生产日期, dat1_2_tt$经过月),]
+
+dat2_1_tt <- dat2_tt[, c("生产日期","经过月")]
+dat2_2_tt <- plyr::count(dat2_1_tt, names(dat2_1_tt))
+names(dat2_2_tt)[3] <- "销售数量"
+dat2_3_tt <- dat2_2_tt[order(dat2_2_tt$生产日期, dat2_2_tt$经过月),]
+
+merge_data_tt <- merge(dat1_2_tt, dat2_2_tt, by = c("经过月", "生产日期"), all = TRUE)
+merge_data_tt$理赔数量[is.na(merge_data_tt$理赔数量)] <- 0
+merge_data_tt$销售数量[is.na(merge_data_tt$销售数量)] <- 0
+new_merge_data_tt <- merge_data_tt[merge_data_tt$经过月 >= 0,]
+new_merge_data_tt <- new_merge_data_tt[order(new_merge_data_tt$生产日期,new_merge_data_tt$经过月),]
+t_tt = data.table(new_merge_data_tt)
+new_merge_data1_tt <- t_tt[,cumsum(销售数量), by = 生产日期]
+new_merge_data2_tt <- t_tt[,cumsum(理赔数量), by = 生产日期]
+names(new_merge_data1_tt)[2] <- "销售数量"
+names(new_merge_data2_tt)[2] <- "理赔数量"
+newdata_tt <- cbind(new_merge_data1_tt, new_merge_data2_tt, new_merge_data_tt$经过月)
+names(newdata_tt)[5] <- "经过月"
+newdata_tt <- newdata_tt[,c("生产日期", "经过月", "销售数量", "理赔数量")]
+
+newdata_tt <- transform(newdata_tt, 理赔率 = 理赔数量 / 销售数量 * 100)
+newdata_tt$理赔率 <- round(newdata_tt$理赔率, 2)
+newdata_tt$生产日期 <- format(newdata_tt$生产日期, format = "%Y%m")
+newdata_tt$生产日期 <- as.character(newdata_tt$生产日期)
+newdata_tt <- newdata_tt[newdata_tt$理赔率 <= 10,]
+newdata_tt
+```
+
+# 无内胎产品理赔数据
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+m_tl <- c("155|165|175|185|195|205|215|225|235|245|255|265|275|285|295|31|385|445|
+       425|17.5|19.5|22.5|24.5")
+x_tl <- grep(pattern = m_tl, x = claim_data$轮胎规格, value = TRUE)
+y_tl <- grep(pattern = m_tl, x = sales_data$轮胎规格, value = TRUE)
+myvars1_tl <- claim_data$轮胎规格 %in% x_tl
+myvars2_tl <- sales_data$轮胎规格 %in% y_tl
+dat1_tl <- claim_data[myvars1_tl, ]
+dat2_tl <- sales_data[myvars2_tl, ]
+
+dat1_1_tl <- dat1_tl[, c("生产日期","经过月")]
+dat1_2_tl <- plyr::count(dat1_1_tl, names(dat1_1_tl))
+names(dat1_2_tl)[3] <- "理赔数量"
+dat1_3_tl <- dat1_2_tl[order(dat1_2_tl$生产日期, dat1_2_tl$经过月),]
+
+dat2_1_tl <- dat2_tl[, c("生产日期","经过月")]
+dat2_2_tl <- plyr::count(dat2_1_tl, names(dat2_1_tl))
+names(dat2_2_tl)[3] <- "销售数量"
+dat2_3_tl <- dat2_2_tl[order(dat2_2_tl$生产日期, dat2_2_tl$经过月),]
+
+merge_data_tl <- merge(dat1_3_tl, dat2_3_tl, by = c("经过月", "生产日期"), all = TRUE)
+merge_data_tl$理赔数量[is.na(merge_data_tl$理赔数量)] <- 0
+merge_data_tl$销售数量[is.na(merge_data_tl$销售数量)] <- 0
+new_merge_data_tl <- merge_data_tl[merge_data_tl$经过月 >= 0,]
+new_merge_data_tl <- new_merge_data_tl[order(new_merge_data_tl$生产日期,new_merge_data_tl$经过月),]
+t_tl = data.table(new_merge_data_tl)
+new_merge_data1_tl <- t_tl[,cumsum(销售数量), by = 生产日期]
+new_merge_data2_tl <- t_tl[,cumsum(理赔数量), by = 生产日期]
+names(new_merge_data1_tl)[2] <- "销售数量"
+names(new_merge_data2_tl)[2] <- "理赔数量"
+newdata_tl <- cbind(new_merge_data1_tl, new_merge_data2_tl,           new_merge_data_tl$经过月)
+names(newdata_tl)[5] <- "经过月"
+newdata_tl <- newdata_tl[,c("生产日期", "经过月", "销售数量", "理赔数量")]
+
+newdata_tl <- transform(newdata_tl, 理赔率 = 理赔数量 / 销售数量 * 100)
+newdata_tl$理赔率 <- round(newdata_tl$理赔率, 2)
+newdata_tl$生产日期 <- format(newdata_tl$生产日期, format = "%Y%m")
+newdata_tl$生产日期 <- as.character(newdata_tl$生产日期)
+newdata_tl <- newdata_tl[newdata_tl$理赔率 <= 10,]
+newdata_tl
+```
+
+# 有内胎产品理赔率趋势图
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, dpi = 2000}
+ggplot(newdata_tt, aes(经过月, 理赔率, group = 生产日期, color = 生产日期)) +
+    geom_line(size = 0.5) +
+    geom_point(size = 0.8) +
+    geom_text(aes(label = 理赔率, 
+                  vjust = -0.2, hjust = 0.5)) +
+    scale_y_continuous(breaks = seq(0,max(newdata_tt$理赔率) + 0.1,0.1), 
+                       limits = c(0,max(newdata_tt$理赔率) + 0.1)) +
+    scale_x_continuous(breaks = seq(0,max(newdata_tt$经过月),1),
+                       limits = c(0,max(newdata_tt$经过月))) +
+    labs(title = "合肥有内胎产品理赔率趋势图",
+         x = "经过月", y = "理赔率/%") +
+  theme(title = element_text(family = "GB1", size = 12, color = "red",
+                           face = "italic", lineheight = 0.2),                                    plot.title = element_text(hjust = 0.5))
+```
+
+# 无内胎产品理赔率趋势图
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, dpi=2000, paged.print=FALSE}
+ggplot(newdata_tl, aes(经过月, 理赔率, group = 生产日期, color = 生产日期)) +
+  geom_line(size = 0.5) +
+  geom_point(size = 0.8) +
+  geom_text(aes(label = 理赔率, 
+                vjust = -0.2, hjust = 0.5)) +
+  scale_y_continuous(breaks = seq(0,max(newdata_tl$理赔率) + 0.1,0.1), 
+                     limits = c(0,max(newdata_tl$理赔率) + 0.1)) +
+  scale_x_continuous(breaks = seq(0,max(newdata_tl$经过月),1),
+                     limits = c(0,max(newdata_tl$经过月))) +
+  labs(title = "合肥无内胎产品理赔率趋势图",
+       x = "经过月", y = "理赔率/%") + 
+   theme(title = element_text(family = "GB1", size = 12, color = "red",
+                           face = "italic", lineheight = 0.2),                                    plot.title = element_text(hjust = 0.5))
+```
